@@ -56,23 +56,22 @@
 
 (defn simulateWalk
       ([field predicate pos]
-        (simulateWalk field predicate #{} (reduce conj (clojure.lang.PersistentQueue/EMPTY) [[pos nil]])))
-      ([field predicate visited check]
-        (let [next (peek check)]
-             (if next
-               (let [move (get next 0)
-                     direction (get (peek check) 1)
-                     result (predicate move)
-                     possible (into #{} (possibleMoves field move))
-                     newPossible (difference possible visited (into [] check))
-                     newCheck (apply conj (pop check) (map (fn [x] [x (or direction x)]) newPossible))
-                     ]
-                    (if result
-                      direction
-                      (recur field predicate (conj visited move) newCheck)
-                      ))
-               false
-               ))))
+        (loop [visited #{}
+               check (conj (clojure.lang.PersistentQueue/EMPTY) [pos nil])]
+              (let [[next] check]
+                   (if next
+                     (let [[move direction] next
+                           result (predicate move)
+                           possible (into #{} (possibleMoves field move))
+                           newPossible (difference possible visited (into #{} check))
+                           newCheck (apply conj (pop check) (map (fn [x] [x (or direction x)]) newPossible))
+                           ]
+                          (if result
+                            direction
+                            (recur (conj visited move) newCheck)
+                            ))
+                     false
+                     )))))
 
 (defn enemies? [field enemies]
       (first (filter (fn [type] (some #{type} enemies)) (map :type (map deref (flatten field))))))
