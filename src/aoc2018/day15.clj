@@ -3,6 +3,14 @@
 (require '[clojure.string :as str])
 (require '[clojure.set :refer [difference union]])
 
+(def input "#######
+#.G...#
+#...EG#
+#.#.#G#
+#..G#E#
+#.....#
+#######")
+
 (def directions [
                  (fn [{:keys [x y]}] {:x x :y (dec y)})     ;; up
                  (fn [{:keys [x y]}] {:x (dec x) :y y})     ;; left
@@ -11,13 +19,81 @@
                  ])
 
 (def playerTypes {
-                  :wall   {:char "#" :type "wall" :player false :open false}
-                  :space  {:char "." :type "space" :player false :open true}
-                  :goblin {:char "G" :type "goblin" :player true :open false :lp 200 :enemies ["elf"] :whenDead :space}
-                  :elf    {:char "E" :type "elf" :player true :open false :lp 200 :enemies ["goblin"] :whenDead :space}
+                  :wall   {:char "#" :type :wall :fixed true}
+                  :space  {:char "." :type :space :open true :node true}
+                  :goblin {:char "G" :type :goblin :player true :node true :lp 200 :enemies [:elf] :whenDead :space}
+                  :elf    {:char "E" :type :elf :player true :node true :lp 200 :enemies [:goblin] :whenDead :space}
                   })
 
 (def charPlayerTypeMap (into {} (for [[k v] playerTypes] [(:char v) v])))
+
+(defn createNodes [cells]
+      (loop
+        [nodesByPos {}
+         nodes []
+         cells cells
+         index 0]
+        (let
+          [[cell & remaining] cells]
+          (if (empty? cells)
+            [nodesByPos nodes]
+            (recur
+              (into nodesByPos {(:pos cell) index})
+              (into nodes [{:pos (:pos cell) :index index}])
+              remaining
+              (inc index))))))
+
+(defn connectNodes [[nodesByPos nodes]]
+      (map (fn [node] (conj node {:to (into [] (remove nil? (map (fn [move] (get nodesByPos (move (:pos node)))) directions)))})) nodes))
+
+(defn charsToCells [input playerTypes]
+      (let [charPlayerTypeMap (into {} (for [[k v] playerTypes] [(:char v) v]))]
+           (flatten
+             (map-indexed
+               (fn [y line]
+                   (map-indexed
+                     (fn [x char]
+                         (conj (get charPlayerTypeMap (str char)) {:pos {:x x :y y}}))
+                     line))
+               (str/split-lines input)))))
+
+
+
+(defn initContext [input playerTypes]
+      (let [[players fixed nodes mx my]
+            (reduce
+              (fn [[players fixed nodes mx my], cell]
+                  [
+                   (if (:player cell) (conj players cell) players)
+                   (if (:fixed cell) (conj fixed cell) fixed)
+                   (if (:node cell) (conj nodes cell) nodes)
+                   (max mx (:x (:pos cell)))
+                   (max my (:y (:pos cell)))
+                   ])
+              [[] [] [] 0 0]
+              (charsToCells input playerTypes))
+            [nodesByPos nodeList] (createNodes nodes)
+            connectedNodeList (connectNodes nodeList)]
+           {:playerTypes playerTypes
+            :players     players
+            :fixed       fixed
+            :nodesByPos  nodesByPos
+            :nodes       connectedNodeList
+            :size        {:width (inc mx) :height (inc my)}
+            }))
+
+(defn playerNodes [context]
+      (map (fn[player] (get (:nodesByPos context) (:pos player))) (:players context)))
+
+(defn inRangeNodes [context enemies]
+      (remove nil? (map (fn[pos] (get (:nodesByPos context) pos)) (mapcat (fn [enemy] (map (fn [move] (move (:pos enemy))) directions)) enemies))))
+
+(defn findEnemies [context player]
+      (filter (fn [other] (some #{(:type other)} (:enemies player))) (:players context)))
+
+(defn playPlayer [context player]
+
+      )
 
 (defn getCell [field pos] (nth (nth field (:y pos)) (:x pos)))
 
@@ -122,6 +198,8 @@
                               (str/join "," (map (fn [cell] (str (:char @cell) "(" (:lp @cell) ")")) (filter (fn [x] (>= (:lp @x -1) 0)) row))) "\n")
                          ) field)))
 
+
+
 (defn readInputToField [input] (map-indexed
                                  (fn [y line]
                                      (map-indexed
@@ -218,7 +296,7 @@
 (play (readInputToField input))
 
 ;;TODO chance x and y to pos array
-;;TODO reorganize methods into play method.
+;;TODO reorganize methtopods into play method.
 ;;TODO move from atom based field to recursive play rounds
 ;;
 ;;
