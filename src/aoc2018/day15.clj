@@ -4,10 +4,10 @@
 (require '[clojure.set :refer [difference union]])
 
 (def input "#######
-#.G...#
-#...EG#
-#.#.#G#
-#..G#E#
+#..E..#
+#.###.#
+#E#.#G#
+#.###.#
 #.....#
 #######")
 
@@ -15,15 +15,15 @@
                  (fn [{:keys [x y]}] {:x x :y (dec y)})     ;; up
                  (fn [{:keys [x y]}] {:x (dec x) :y y})     ;; left
                  (fn [{:keys [x y]}] {:x (inc x) :y y})     ;; right
-                 (fn [{:keys [x y]}] {:x x :y (inc y)})     ;; down
-                 ])
+                 (fn [{:keys [x y]}] {:x x :y (inc y)})])     ;; down
+                 
 
 (def playerTypes {
                   :wall   {:char "#" :type :wall :fixed true}
                   :space  {:char "." :type :space :open true :node true}
                   :goblin {:char "G" :type :goblin :player true :node true :lp 200 :enemies [:elf] :whenDead :space}
-                  :elf    {:char "E" :type :elf :player true :node true :lp 200 :enemies [:goblin] :whenDead :space}
-                  })
+                  :elf    {:char "E" :type :elf :player true :node true :lp 200 :enemies [:goblin] :whenDead :space}})
+                  
 
 (def charPlayerTypeMap (into {} (for [[k v] playerTypes] [(:char v) v])))
 
@@ -43,8 +43,15 @@
               remaining
               (inc index))))))
 
-(defn connectNodes [[nodesByPos nodes]]
-      (map (fn [node] (conj node {:to (into [] (remove nil? (map (fn [move] (get nodesByPos (move (:pos node)))) directions)))})) nodes))
+(defn connectNodes [nodesByPos nodes]
+  (map 
+    (fn [node] 
+      (conj node {:to 
+                  (into [] 
+                    (remove nil? 
+                      (map (fn [move] 
+                             (get nodesByPos 
+                               (move (:pos node)))) directions)))})) nodes))
 
 (defn charsToCells [input playerTypes]
       (let [charPlayerTypeMap (into {} (for [[k v] playerTypes] [(:char v) v]))]
@@ -57,246 +64,344 @@
                      line))
                (str/split-lines input)))))
 
-
-
 (defn initContext [input playerTypes]
-      (let [[players fixed nodes mx my]
-            (reduce
-              (fn [[players fixed nodes mx my], cell]
-                  [
-                   (if (:player cell) (conj players cell) players)
-                   (if (:fixed cell) (conj fixed cell) fixed)
-                   (if (:node cell) (conj nodes cell) nodes)
-                   (max mx (:x (:pos cell)))
-                   (max my (:y (:pos cell)))
-                   ])
-              [[] [] [] 0 0]
-              (charsToCells input playerTypes))
-            [nodesByPos nodeList] (createNodes nodes)
-            connectedNodeList (connectNodes nodeList)]
-           {:playerTypes playerTypes
-            :players     players
-            :fixed       fixed
-            :nodesByPos  nodesByPos
-            :nodes       connectedNodeList
-            :size        {:width (inc mx) :height (inc my)}
-            }))
+  (let [[players fixed nodes mx my]
+        (reduce
+          (fn [[players fixed nodes mx my], cell]
+            [
+             (if (:player cell) (conj players cell) players)
+             (if (:fixed cell) (conj fixed cell) fixed)
+             (if (:node cell) (conj nodes cell) nodes)
+             (max mx (:x (:pos cell)))
+             (max my (:y (:pos cell)))])
+          
+          [[] [] [] 0 0]
+          (charsToCells input playerTypes))
+        [nodesByPos nodeList] (createNodes nodes)
+        connectedNodeList (connectNodes nodesByPos nodeList)]
+    {:playerTypes playerTypes
+     :players     players
+     :fixed       fixed
+     :nodesByPos  nodesByPos
+     :nodes       connectedNodeList
+     :size        {:width (inc mx) :height (inc my)}}))
+            
+(def context (initContext input playerTypes))
+
+
+(def player (get (:players context) 0))
+
+player
+
+(defn playersByNode [context]
+  (into {} (map (fn[player] [(get (:nodesByPos context) (:pos player)) player]) (:players context))))
+
+(playersByNode context)
 
 (defn playerNodes [context]
-      (map (fn[player] (get (:nodesByPos context) (:pos player))) (:players context)))
+  (map (fn[player] (get (:nodesByPos context) (:pos player))) (:players context)))
+
+(playerNodes context)
 
 (defn inRangeNodes [context enemies]
-      (remove nil? (map (fn[pos] (get (:nodesByPos context) pos)) (mapcat (fn [enemy] (map (fn [move] (move (:pos enemy))) directions)) enemies))))
+      (into #{} (remove nil? (map (fn[pos] (get (:nodesByPos context) pos)) (mapcat (fn [enemy] (map (fn [move] (move (:pos enemy))) directions)) enemies)))))
+
+(defn enemy? [player other]
+  (some #{(:type other)} (:enemies player)))
 
 (defn findEnemies [context player]
-      (filter (fn [other] (some #{(:type other)} (:enemies player))) (:players context)))
-
-(defn playPlayer [context player]
-
-      )
-
-(defn getCell [field pos] (nth (nth field (:y pos)) (:x pos)))
-
-(defn posToString [{:keys [x y]}] (str "(" x "," y ")"))
-
-(defn cellPos [cell] (select-keys cell [:x :y]))
-
-(defn attack [field cell enemy]
-      (print (str (posToString (cellPos cell)) " attacks " (posToString enemy)))
-      (swap! (getCell field enemy)
-             (fn [cell]
-                 (let [updatedCell (update cell :lp - 3)]   ;; TODO move -3 to config
-                      (if (>= (:lp updatedCell) 0)
-                        updatedCell
-                        (conj ((:whenDead updatedCell) playerTypes) (cellPos enemy))
-                        ))))
-      :attack)
-
-(defn possibleMoves [field pos] (filter (fn [newpos] (:open @(getCell field newpos))) (map (fn [mv] (mv pos)) directions)))
-
-(defn swapCells [field pos1 pos2]
-      (let [cell1 (getCell field pos1)
-            cell2 (getCell field pos2)
-            copy @cell1]
-           (swap! cell1 (fn [{:keys [x y]}] (conj @cell2 {:x x :y y})))
-           (swap! cell2 (fn [{:keys [x y]}] (conj copy {:x x :y y})))
-           ))
-
-(defn weakestEnemyInRange [field enemies pos]
-      (first
-        (sort-by (juxt :lp :index)
-                 (map-indexed (fn [index, enemy] (conj enemy {:index index}))
-                              (filter (fn [y] (some #{(:type y)} enemies))
-                                      (map (fn [x] @(getCell field x))
-                                           (map (fn [moveTo] (moveTo pos)) directions)))))))
-
-(defn simulateWalk
-      ([field predicate pos]
-        (loop [visited #{}
-               check (conj (clojure.lang.PersistentQueue/EMPTY) [pos nil])]
-              (let [[next] check]
-                   (if next
-                     (let [[move direction] next
-                           result (predicate move)
-                           possible (into #{} (possibleMoves field move))
-                           newPossible (difference possible visited (into #{} check))
-                           newCheck (apply conj (pop check) (map (fn [x] [x (or direction x)]) newPossible))
-                           ]
-                          (if result
-                            direction
-                            (recur (conj visited move) newCheck)
-                            ))
-                     false
-                     )))))
-
-(defn enemies? [field enemies]
-      (first (filter (fn [type] (some #{type} enemies)) (map :type (map deref (flatten field))))))
+      (filter (partial enemy? player) (:players context)))
 
 
-(defn move [field cell]
-      (let [newpos (simulateWalk field (partial weakestEnemyInRange field (:enemies cell)) (select-keys cell [:x :y]))]
-           (if newpos
-             (do
-               (print (str (posToString (cellPos cell)) " moves to " (posToString newpos)))
-               (swapCells field (select-keys cell [:x :y]) newpos)
-               (let [movedCell @(getCell field newpos)]
-                    (let [enemy (weakestEnemyInRange field (:enemies cell) (cellPos movedCell))]
-                         (when enemy
-                               (attack field movedCell enemy)
-                               ))                           ;; TODO combine move and attack
-                    )
-               :moved
-               )
-             (do
-               (print (str (posToString (cellPos cell)) " has no moves"))
-               (if (enemies? field (:enemies cell))
-                 :notreachable
-                 :noenemies
-                 )
-               ))))
+(def enemies (findEnemies context player))
 
-(defn playCell [field cell]
-      (when (:player @(getCell field (cellPos cell)))       ;; check if cell is player
-            ;;    (print (str (:y cell) " " (:x cell) " " (:type cell) " " (:lp cell)))
-            (let [enemy (weakestEnemyInRange field (:enemies cell) (cellPos cell))]
-                 (if enemy
-                   (attack field cell enemy)
-                   (move field cell)
-                   ))))
+enemies
 
-(defn playRound [field]
-      (reduce #(and %1 (not= %2 :noenemies)) true
-              (map (fn [item] (playCell field item))
-                   (into []
-                         (filter :player (map deref (flatten field)))))
-              )
-      )
+(def irn (inRangeNodes context enemies))
 
-(defn fieldToString [field]
-      (str/join (map (fn [row]
-                         (str (str/join (map (fn [cell] (:char @cell)) row)) "   "
-                              (str/join "," (map (fn [cell] (str (:char @cell) "(" (:lp @cell) ")")) (filter (fn [x] (>= (:lp @x -1) 0)) row))) "\n")
-                         ) field)))
+irn
+
+(defn playerNode [player] (get (:nodesByPos context) (:pos player)))
+
+(playerNode player)
+
+(defn predicate [node] (contains? irn node))
+
+(defn neighbours [nodes node] (map 
+                                (fn[x] 
+                                  (apply conj [] x node)) 
+                                (:to (nth nodes (first node)))))
+
+(neighbours (:nodes context) [1])
+
+(defn remainingNodes [remaining]
+  (into #{} (map first remaining)))
+
+(remainingNodes [[5 0 1] [3 2 1] [7 2 1]])
+
+(defn filteredNodes [paths filters]
+  (remove 
+    (fn[path] 
+      (some (fn[filter] (contains? filter (first path))) filters))
+    paths))
+
+(filteredNodes [[1] [0 1] [3 0 1]] [#{21} #{0} #{22 3}])
+  
+(defn filteredNeighbours [nodes node visited remaining blocked]
+  (filteredNodes 
+    (neighbours nodes node) 
+    [visited 
+     (remainingNodes remaining) 
+     blocked]))
+
+
+(filteredNeighbours (:nodes context) [1] #{} [] #{2})
+(filteredNeighbours (:nodes context) [0 1] #{1} [[2 1] [6 1]] #{2})
+(filteredNeighbours (:nodes context) [2 1] #{1 0} [[6 1] [5 0 1]] #{2})
+(filteredNeighbours (:nodes context) [6 1] #{1 0 2} [[5 0 1] [3 2 1] [7 2 1]] #{2})
+(filteredNeighbours (:nodes context) [5 0 1] #{1 0 2 6} [[3 2 1] [7 2 1]] #{2})
 
 
 
-(defn readInputToField [input] (map-indexed
-                                 (fn [y line]
-                                     (map-indexed
-                                       (fn [x char]
-                                           (atom
-                                             (conj (get charPlayerTypeMap (str char)) {:x x :y y})))
-                                       line))
-                                 (str/split-lines input)))
 
-(defn play [field]
-      (let [result (atom true)
-            round (atom 0)]
-           (print (str "Initially\n"))
-           (print (fieldToString field))
+(defn shortestPath [nodes start predicate blocked] 
+  (loop [visited #{}
+         check  (conj (clojure.lang.PersistentQueue/EMPTY) [start])]
+    (let [next (peek check)
+          remaining (pop check)]
+      (if next
+        (let 
+          [result (predicate (first next))]
+          (if result
+            next
+            (recur 
+              (conj visited (first next))
+              (apply conj remaining (filteredNeighbours nodes next visited remaining blocked)))))
+        false))))
 
-           (while @result
-                  (do
-                    (swap! round inc)
-                    (print (str "Round " @round "\n"))
-                    (swap! result (fn [o] (playRound field)))
-                    (print (fieldToString field))
-                    (when (> @round 100)
-                          (swap! result (fn [old] false))
-                          )))
-           (let [totallp (reduce + (map :lp (filter :player (map deref (flatten field)))))
-                 totalrounds (dec @round)]
-                (print (str "Finished in round " totalrounds "\n"))
-                (print (str "Player points " totallp "\n"))
-                (print (str "Result " (* totalrounds totallp) "\n"))
-                (* totalrounds totallp)
-                )
+(into #{} (playerNodes context))
 
-           ))
+(def sp (shortestPath (:nodes context) 2 predicate (into #{} (playerNodes context))))
+
+sp
+
+(peek (pop sp))
+
+(defn rowCells [context playersByNode y]
+  (str/join 
+    (for [x (range (:width (:size context)))]
+       (let [node (get (:nodesByPos context) {:y y :x x})]
+         (if node
+           (let [player (get playersByNode node)]
+             (if player
+               (:char player)
+               "."))
+           "#")))))
+
+(rowCells context (playersByNode context) 3)
+
+(defn rowLifePoints [context playersByNode y]
+  (str/join ", " 
+    (remove nil? 
+      (for [x (range (:width (:size context)))]
+        (let [node (get (:nodesByPos context) {:y y :x x})]
+          (when node
+            (let [player (get playersByNode node)]
+              (when player
+                (str "(" (:char player) ":" (:lp player) ")")))))))))
+
+(rowLifePoints context (playersByNode context) 3)
+
+(defn displayString [context]
+  (let [playersByNode (playersByNode context)]
+    (str/join 
+      (for [y (range (:height (:size context)))]
+        (str 
+          (rowCells context playersByNode y) "   "
+          (rowLifePoints context playersByNode y) "\n")))))
+
+(displayString context)
+
+(defn attack [context playerNodeIndex]
+  (let 
+    [nodes (:nodes context)
+     playersByNode (playersByNode context)
+     player (get playersByNode playerNodeIndex)
+     playerNode (nth nodes playerNodeIndex)
+     neighbourNodes (:to playerNode)
+     neighbourPlayers (remove nil? (map (partial get playersByNode) neighbourNodes))
+     enemyPlayers (filter (partial enemy? player) neighbourPlayers)
+     sortedPlayers (sort-by :lp enemyPlayers)
+     attackPlayer (first sortedPlayers)
+     attackPlayerIndex (.indexOf (:players context) attackPlayer)]
+    (if (>= attackPlayerIndex 0)
+      (let 
+        [context (update-in context [:players attackPlayerIndex :lp] #(- % 3))
+         players (:players context)]
+        (if (<= (:lp (get players attackPlayerIndex)) 0)
+          (do 
+            (assoc-in context [:players] 
+              (vec (concat 
+                     (take attackPlayerIndex players)
+                     (drop (inc attackPlayerIndex) players)))))
+          context))
+      context)))
+
+(defn playerMoveTo [context moveToNode player]
+  (let 
+    [movePlayerIndex (.indexOf (:players context) player)
+     moveToPos (:pos (nth (:nodes context) moveToNode))]
+    (attack
+      (assoc-in context [:players movePlayerIndex :pos] moveToPos)
+      moveToNode)))
+
+(defn move [context player inRangeNodes] 
+  (let 
+    [playerNode (playerNode player)
+     predicate (fn [node] (contains? inRangeNodes node))
+     nodes (:nodes context)
+     playerNodesSet (into #{} (playerNodes context))
+     shortestPath (shortestPath nodes playerNode predicate playerNodesSet)
+     moveToNode (peek (pop shortestPath))]
+    (if shortestPath
+      (playerMoveTo context moveToNode player)
+      context)))
+    
+(defn play [context player]
+  (let 
+    [playerNode (playerNode player)
+     enemies (findEnemies context player)
+     inRangeNodes (inRangeNodes context enemies)]
+    (if (contains? inRangeNodes playerNode)
+      (attack context playerNode)
+      (move context player inRangeNodes))))
+
+(defn orderPlayers [context]
+  (update-in 
+    context 
+    [:players] 
+    (fn [players] 
+      (into [] 
+        (sort-by 
+          (juxt 
+            #(:y (:pos %)) 
+            #(:x (:pos %))) 
+          players)))))
+
+(defn playRound [context]
+  (loop 
+    [context (orderPlayers context)
+     index 0]
+    (if (< index (.size (:players context)))
+      (recur 
+        (play context 
+          (get (:players context) index)) 
+        (inc index))
+      context)))
+
+(def context (playRound context))
+(displayString context)
+    
+(def context (playRound context))
+(displayString context)
+  
+(def context (playRound context))
+(displayString context)
+
+(def context (playRound context))
+(displayString context)
+
+(def context (playRound context))
+(displayString context)
+
+(def context (playRound context))
+(displayString context)
+
+(def context (playRound context))
+(displayString context)
+
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
+(def context (playRound context))
+(displayString context)
 
 
-(assert (= (play (readInputToField "#######
-#.G...#
-#...EG#
-#.#.#G#
-#..G#E#
-#.....#
-#######")) 20755))
+
+ 
+
+;TODO use partials as much as possible
+;TODO use apply as much as possible
+;TODO use thread last macro as much as possible
+;TODO remove dependency on position
 
 
-(assert (= (play (readInputToField "#######
-#G..#E#
-#E#E.E#
-#G.##.#
-#...#E#
-#...E.#
-#######")) 36334))
-
-(assert (= (play (readInputToField "#######
-#E..EG#
-#.#G.E#
-#E.##E#
-#G..#.#
-#..E#.#
-#######
-")) 39514))
-
-(assert (= (play (readInputToField "#######
-#E.G#.#
-#.#G..#
-#G.#.G#
-#G..#.#
-#...E.#
-#######
-")) 27755))
-
-(assert (= (play (readInputToField "#######
-#.E...#
-#.#..G#
-#.###.#
-#E#G#G#
-#...#G#
-#######
-")) 28944))
-
-(assert (= (play (readInputToField "#########
-#G......#
-#.E.#...#
-#..##..G#
-#...##..#
-#...#...#
-#.G...G.#
-#.....G.#
-#########
-")) 18740))
 
 
-(def input (slurp "resources/day15.txt"))
 
-(play (readInputToField input))
 
-;;TODO chance x and y to pos array
-;;TODO reorganize methtopods into play method.
-;;TODO move from atom based field to recursive play rounds
-;;
-;;
+
+
+
+
+
+
